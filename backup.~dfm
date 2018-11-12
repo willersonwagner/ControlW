@@ -1,0 +1,64 @@
+object Form44: TForm44
+  Left = 279
+  Top = 152
+  Width = 693
+  Height = 337
+  Caption = 'Form44'
+  Color = clBtnFace
+  Font.Charset = DEFAULT_CHARSET
+  Font.Color = clWindowText
+  Font.Height = -11
+  Font.Name = 'MS Sans Serif'
+  Font.Style = []
+  OldCreateOrder = False
+  Position = poScreenCenter
+  OnShow = FormShow
+  PixelsPerInch = 96
+  TextHeight = 13
+  object Label1: TLabel
+    Left = 256
+    Top = 160
+    Width = 257
+    Height = 24
+    Caption = 'Itens da Venda F5 Atualizar'
+    Font.Charset = DEFAULT_CHARSET
+    Font.Color = clWindowText
+    Font.Height = -20
+    Font.Name = 'MS Sans Serif'
+    Font.Style = [fsBold]
+    ParentFont = False
+  end
+  object DBGrid1: TDBGrid
+    Left = 0
+    Top = 0
+    Width = 685
+    Height = 153
+    Align = alTop
+    Options = [dgTitles, dgIndicator, dgColumnResize, dgColLines, dgRowLines, dgTabs, dgConfirmDelete, dgCancelOnExit]
+    TabOrder = 0
+    TitleFont.Charset = DEFAULT_CHARSET
+    TitleFont.Color = clWindowText
+    TitleFont.Height = -11
+    TitleFont.Name = 'MS Sans Serif'
+    TitleFont.Style = []
+    OnKeyDown = DBGrid1KeyDown
+    OnKeyPress = DBGrid1KeyPress
+    OnKeyUp = DBGrid1KeyUp
+  end
+  object DBGrid2: TDBGrid
+    Left = 0
+    Top = 190
+    Width = 685
+    Height = 120
+    Align = alBottom
+    Options = [dgTitles, dgIndicator, dgColumnResize, dgColLines, dgRowLines, dgTabs, dgConfirmDelete, dgCancelOnExit]
+    TabOrder = 1
+    TitleFont.Charset = DEFAULT_CHARSET
+    TitleFont.Color = clWindowText
+    TitleFont.Height = -11
+    TitleFont.Name = 'MS Sans Serif'
+    TitleFont.Style = []
+    OnKeyDown = DBGrid2KeyDown
+    OnKeyPress = DBGrid2KeyPress
+  end
+end

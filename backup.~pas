@@ -1,0 +1,192 @@
+unit backup;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, Grids, DBGrids;
+
+type
+  TForm44 = class(TForm)
+    DBGrid1: TDBGrid;
+    DBGrid2: TDBGrid;
+    Label1: TLabel;
+    procedure DBGrid1KeyPress(Sender: TObject; var Key: Char);
+    procedure DBGrid1KeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure DBGrid1KeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure DBGrid2KeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure DBGrid2KeyPress(Sender: TObject; var Key: Char);
+    procedure FormShow(Sender: TObject);
+  private
+    function buscaVenda : String;
+    procedure acertarTamanhoDBGRID1();
+    procedure abreDataSet(refresh1 : boolean = false);
+    { Private declarations }
+  public
+    retorno : TStringList;
+    function getRetorno : TStringList;
+
+    { Public declarations }
+  end;
+
+var
+  Form44: TForm44;
+
+implementation
+
+uses Unit1, func, principal;
+
+{$R *.dfm}
+function TForm44.getRetorno : TStringList;
+begin
+  if funcoes.Contido('entrada', dm.IBselect.SQL.GetText) then
+    begin
+      retorno := TStringList.Create;
+      retorno.Add(DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString);
+      exit;
+    end;
+
+  retorno := TStringList.Create;
+  retorno.Add(DBGrid1.DataSource.DataSet.fieldbyname('formapagto').AsString);
+  retorno.Add(DBGrid1.DataSource.DataSet.fieldbyname('total').AsString);
+  retorno.Add(DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString);
+end;
+
+function TForm44.buscaVenda : String;
+begin
+  if funcoes.Contido('entrada', dm.IBselect.SQL.GetText) then
+    begin
+      dm.IBselect.Close;
+      dm.IBselect.SQL.Clear;
+      dm.IBselect.SQL.Add('select p.cod, c.nome, p.quant, p.p_compra, p.total from item_entrada p, produto c where (c.cod = p.cod) and (p.nota = :nota)');
+      dm.IBselect.ParamByName('nota').AsString := DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString;
+      dm.IBselect.Open;
+      funcoes.FormataCampos(dm.ibselect, 2,'',2);
+      exit;
+    end;
+
+  dm.IBselect.Close;
+  dm.IBselect.SQL.Clear;
+  dm.IBselect.SQL.Add('select p.cod, c.nome, p.quant, p.p_venda, p.total from item_venda p, produto c where (c.cod = p.cod) and (p.nota = :nota)');
+  dm.IBselect.ParamByName('nota').AsString := DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString;
+  dm.IBselect.Open;
+  funcoes.FormataCampos(dm.ibselect, 2,'',2);
+end;
+
+procedure TForm44.DBGrid1KeyPress(Sender: TObject; var Key: Char);
+var
+  nota1 : String;
+  kay1 : char;
+begin
+  key := UpCase(key);
+
+  if key = 'C' then
+    begin
+      nota1 := DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString;
+
+      try
+        form22.enviNFCe(nota1);
+
+      except
+      end;
+
+      abreDataSet();
+      funcoes.FormataCampos(dm.ibquery2,2,'',2);
+
+      DBGrid1.DataSource.DataSet.Locate('nota', nota1, []);
+      buscaVenda;
+    end;
+
+  if key = #27 then
+    begin
+      funcoes.retornoLocalizar := '*';
+     // dm.IBQuery2.Close;
+      dm.IBselect.Close;
+      close;
+    end;
+
+
+  if key = #13 then
+    begin
+      funcoes.retornoLocalizar := DBGrid1.DataSource.DataSet.fieldbyname('nota').AsString;
+      if funcoes.retornoLocalizar = '' then
+        begin
+          abreDataSet(true);
+          exit;
+        end;
+      getRetorno;
+      //dm.IBQuery2.Close;
+      dm.IBselect.Close;
+      close;
+    end;
+end;
+
+procedure TForm44.DBGrid1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if (key = 38) or (key = 40) then buscaVenda;
+  if key = 116 then
+    begin
+      abreDataSet(true);
+    end;
+
+end;
+
+procedure TForm44.DBGrid1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if key=119 then DBGrid2.SetFocus;
+end;
+
+procedure TForm44.DBGrid2KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if key=119 then DBGrid1.SetFocus;
+end;
+
+procedure TForm44.DBGrid2KeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #27 then DBGrid1.SetFocus;
+end;
+
+procedure TForm44.FormShow(Sender: TObject);
+begin
+  acertarTamanhoDBGRID1();
+end;
+
+procedure TForm44.acertarTamanhoDBGRID1();
+var
+  i, acc : integer;
+begin
+  acc := 0;
+  for i:=0 to DBGrid1.Columns.Count-1 do
+    begin
+       //showme
+       acc := acc + DBGrid1.Columns[i].Width;
+    end;
+    
+  self.Width := acc + 80;
+  DBGrid1.Width := acc;
+  //if acc < 299 then self.Width:=acc+10;
+end;
+
+procedure TForm44.abreDataSet(refresh1 : boolean = false);
+begin
+  if refresh1 then
+    begin
+      DBGrid1.DataSource.DataSet.Close;
+      DBGrid1.DataSource.DataSet.Open;
+      funcoes.FormataCampos(dm.ibquery2,2,'',2);
+      buscaVenda;
+      exit;
+    end;
+
+  dm.IBQuery2.Close;
+  dm.IBQuery2.SQL.Text := ('select v.nota, v.data, v.codhis as formapagto, a.nome as vendedor, v.desconto, v.total from venda v left join  vendedor a on (v.vendedor = a.cod) where (v.cancelado = 0) and ((v.ok = '+ QuotedStr('') +') or (v.ok = '+ QuotedStr('N') +' )) order by v.nota desc');
+  dm.IBQuery2.Open;
+end;
+
+end.
