@@ -1,0 +1,1569 @@
+unit Unit1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, ComCtrls, ExtCtrls, ShellApi, AppEvnts, Contnrs,
+  IBDatabase, DB, IBCustomDataSet, IBQuery, untNFCe, ACBrNFe, funcoesdav,
+  ACBrBase, ACBrSocket, ACBrIBPTax, ACBrDFe, IniFiles, Gauges,
+  IdBaseComponent, IdComponent, IdUDPBase, IdUDPClient, IdSNTP,
+  ACBrNFeDANFEClass, ACBrNFeDANFeRLClass, IdAntiFreezeBase, IdAntiFreeze,
+  ACBrNFeDANFeESCPOS, ACBrDANFCeFortesFr;
+
+const
+  WM_ICONTRAY = WM_USER + 1;
+
+type
+  TForm1 = class(TForm)
+    RichEdit1: TRichEdit;
+    Label1: TLabel;
+    Timer1: TTimer;
+    Timer2: TTimer;
+    BDControl: TIBDatabase;
+    IBTransaction2: TIBTransaction;
+    QueryControlProd: TIBQuery;
+    QueryControlVenda: TIBQuery;
+    QueryControlDivs: TIBQuery;
+    IBTransaction1: TIBTransaction;
+    Button1: TButton;
+    ACBrIBPTax1: TACBrIBPTax;
+    BD_Servidor: TIBDatabase;
+    IBQueryServer1: TIBQuery;
+    IBTransaction3: TIBTransaction;
+    IBQueryServer2: TIBQuery;
+    IBQuery1: TIBQuery;
+    IBQuery2: TIBQuery;
+    Gauge1: TGauge;
+    IdSNTP1: TIdSNTP;
+    ACBrNFeDANFeRL1: TACBrNFeDANFeRL;
+    ACBrNFe1: TACBrNFe;
+    IdAntiFreeze1: TIdAntiFreeze;
+    Panel1: TPanel;
+    Label2: TLabel;
+    ACBrNFeDANFCeFortes1: TACBrNFeDANFCeFortes;
+    ACBrNFeDANFeESCPOS1: TACBrNFeDANFeESCPOS;
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure Timer2Timer(Sender: TObject);
+    procedure FormClick(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure Button1Click(Sender: TObject);
+  private
+    inicio : Smallint;
+    totEnvia, contAtualizacao : integer;
+    bancoControl : String;
+    bdPronto, emitNFe, emitNFCe, CAMPO_EXPORTADO_FOI_CRIADO : boolean;
+    pastaControlW_Servidor : String;
+    pastanfe : String;
+    function verSeExisteTabela(nome : String; var query :TIBQuery) : boolean;
+    function procuraProdutoNaLista(cod : integer; var lista1 : TStringList) : integer;
+    procedure testaNFe();
+    function VerificaCampoTabela(NomeCampo, tabela : string; var query : TIBQuery) : boolean;
+    function listaArquivos(const pasta : String) : tstringlist;
+    procedure sinal(const num : integer);
+    function conectaBD_Local() : boolean;
+    function verSeOcorreuMudancaEstoque() : boolean;
+    procedure ajustaHoraPelaInternet();
+    procedure LerDadosArquivo();
+    procedure TrayMessage(var Msg: TMessage);message WM_ICONTRAY;
+    procedure enviaCuponsPendentes();
+    function conectaBD_Servidor() : boolean;
+    function sincronizaParamGerais()  : boolean;
+    function sincronizaEstoque()  : boolean;
+    function sincronizaUsuarios()  : boolean;
+    function sincronizaCEST()  : boolean;
+    function sincronizaNFCe()  : boolean;
+    procedure le_estoque(var listaprod : TStringList);
+    procedure copiaProduto(cod : integer);
+    procedure copiaProdutoDataSet(var queryServer : tibquery);
+    procedure copiaVendas(nota : integer; var notaNova : integer; chave : String; Cancelado : integer = 0);
+    function copiaNFCes(chave : String;nota, notaNova : integer; somenteCopiaXML : boolean = false ) : boolean;
+    procedure copiaNFes();
+    function Incrementa_Generator(Gen_name : string; valor_incremento : integer; var query : TIBQuery) : string;
+    procedure progresso(ini, fim : integer);
+    { Private declarations }
+  public
+    caminhoComBarraNoFinal : String;
+    pgerais1 : TStringList;
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+  Nid : TNotifyIconData;
+  procedure TrimAppMemorySize;
+
+const
+  {sqlSinc : String = 'select p.cod, hash(nome || codbar || cast(p_venda as varchar(20))'+
+  ' ||unid||classif||aliquota||is_pis||p.cod_ispis) as hash from produto p order by p.cod';
+  sqlSincServer : String = 'select p.cod,nome, codbar, quant, p_venda, unid, classif, aliquota, is_pis, cod_ispis, hash(nome || codbar || cast(p_venda as varchar(20))'+
+  ' ||unid||classif||aliquota||is_pis||p.cod_ispis) as hash from produto p order by p.cod';}
+
+
+  sqlSinc : String = 'select p.cod, hash(nome || codbar || cast(p_venda as varchar(20))'+
+  ' ||unid||classif||aliquota||is_pis||p.cod_ispis  || quant) as hash from produto p order by p.cod';
+
+  sqlSincServer : String = 'select p.cod,nome, codbar, quant, p_venda, unid, classif, aliquota, is_pis, cod_ispis, hash(nome || codbar || cast(p_venda as varchar(20))'+
+  ' ||unid||classif||aliquota||is_pis||p.cod_ispis  || quant) as hash from produto p order by p.cod';
+
+implementation
+
+uses DateUtils, Math, StrUtils;
+
+{$R *.dfm}
+
+procedure TForm1.enviaCuponsPendentes();
+var
+  esta : string;
+  envi : boolean;
+  ok   : integer;
+begin
+  if not conectaBD_Local then
+    begin
+      exit;
+    end;
+
+  QueryControlProd.Close;
+  QueryControlProd.SQL.Text := 'select nota, chave, data from nfce where adic = ''OFF'' and (substring(chave from 23 for 3) = :serie) ';
+  QueryControlProd.ParamByName('serie').AsString := strzero(getSerieNFCe, 3);
+  QueryControlProd.Open;
+  QueryControlProd.FetchAll;
+
+  if QueryControlProd.IsEmpty then exit;
+
+  ok := 0;
+  while not QueryControlProd.Eof do
+    begin
+      ok := ok + 1;
+      self.Caption := 'Enviando Cupons => ' +  IntToStr(ok) +'/' + IntToStr(QueryControlProd.RecordCount) ;
+      Application.ProcessMessages;
+      Application.ProcessMessages;
+      Label1.Caption := 'Enviando Cupom:' + #13 + 'Nota: ' + QueryControlProd.fieldbyname('nota').AsString + #13 +
+      'Chave: ' + QueryControlProd.fieldbyname('chave').AsString + #13 + 'Total Emitidas: ' + IntToStr(totEnvia);
+      Application.ProcessMessages;
+      RichEdit1.Lines.Add('--------------------------------------------------');
+      RichEdit1.Lines.Add('Nota: ' + QueryControlProd.fieldbyname('nota').AsString);
+      RichEdit1.Lines.Add('Chave: '+ QueryControlProd.fieldbyname('chave').AsString);
+      envi := false;
+
+      try
+        envi := EnviarCupomEletronico2(QueryControlProd.FieldByName('nota').AsString, esta, false, true, false);
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro: ' + e.Message);
+          end;
+      end;
+
+      if envi then
+        begin
+          RichEdit1.Lines.Add('Estado: Enviado');
+          totEnvia := totEnvia + 1;
+        end
+      else
+        begin
+          RichEdit1.Lines.Add('Estado: ERRO => ' + esta);
+        end;
+
+      RichEdit1.Lines.Add('--------------------------------------------------');
+      QueryControlProd.Next;  
+    end;
+    //end;
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  lista1   : TList;
+  lis, arq : TStringList;
+begin
+  RichEdit1.Clear;
+  sinal(1);
+  LerDadosArquivo;
+  inicio          := 0;
+  contAtualizacao := 2000;
+
+with Nid do
+  begin
+    cbSize := SizeOf(Nid);
+    Wnd := Handle;
+    uID := 0;
+    uFlags := NIF_MESSAGE + NIF_ICON + NIF_TIP;
+    uCallbackMessage := WM_ICONTRAY;
+    hIcon := Application.Icon.Handle;
+    StrPCopy(szTip, Application.Title);
+  end;
+
+  caminhoComBarraNoFinal := ExtractFileDir(ParamStr(0)) + '\';
+
+  if ParamStr(1) = '' then
+    begin
+      if FileExists(caminhoComBarraNoFinal + 'bd.fdb') then bancoControl := caminhoComBarraNoFinal + 'bd.fdb'
+        else bancoControl := 'C:\CONTROLW\BD.FDB';
+    end
+  else bancoControl := ParamStr(1);
+
+  BDControl.DatabaseName := bancoControl;
+
+  {try
+    BDControl.Connected := true;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('Erro ConectaBD: ' + e.Message);
+        exit;
+      end;
+  end;}
+
+  lista1 := TList.Create;
+  lista1.Add(QueryControlVenda);
+  lista1.Add(QueryControlDivs);
+  lista1.Add(ACBrNFe1);
+  lista1.Add(nil);
+  lista1.Add(ACBrNFeDANFCeFortes1);
+  lista1.Add(ACBrNFeDANFeRL1);
+  lista1.Add(nil);
+  lista1.Add(ACBrNFeDANFeESCPOS1);
+  lista1.Add(ACBrIBPTax1);
+
+  setQueryNFCe(lista1);
+
+  try
+    LerConfiguracaoNFCe;
+  except
+  end;  
+
+  Shell_NotifyIcon(NIM_ADD, @Nid);
+  //Timer1.Enabled := true;
+  Timer2.Enabled := true;
+  totEnvia := 0;
+end;
+
+procedure TForm1.FormDestroy(Sender: TObject);
+begin
+  Nid.uFlags:=0;
+  Shell_NotifyIcon(Nim_Delete, @nid);
+end;
+
+procedure TForm1.Timer2Timer(Sender: TObject);
+begin
+  Timer2.Enabled := false;
+  Timer1.Enabled := true;
+  self.Hide;
+end;
+
+procedure TForm1.TrayMessage(var Msg: TMessage);
+begin
+ case Msg.lParam of
+    WM_LBUTTONDOWN:
+    begin
+      Form1.Show;
+    end;
+    WM_RBUTTONDOWN:
+    begin
+      Form1.Hide;
+    end;
+  end;
+end;
+
+procedure TForm1.FormClick(Sender: TObject);
+begin
+  self.Hide;             
+end;
+
+procedure TForm1.Timer1Timer(Sender: TObject);
+begin
+  Timer1.Enabled := false;
+
+  if not conectaBD_Local() then
+    begin
+      Timer1.Enabled := true;
+      exit;
+    end;
+
+  try
+    enviaCuponsPendentes;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('ERRO: ' + e.Message + ' linha 278');
+      end;
+  end;
+
+  {if not conectaBD_Servidor() then
+    begin
+      Timer1.Enabled := true;
+      exit;
+    end;}
+
+  contAtualizacao := contAtualizacao + 1;
+
+  try
+
+  if contAtualizacao > 20 then
+    begin
+      try
+        sincronizaEstoque;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('ERRO: ' + e.Message + ' linha 290');
+          end;
+      end;  
+      contAtualizacao := 1;
+    end;
+
+  if inicio = 0 then
+    begin
+      inicio := 1;
+      ajustaHoraPelaInternet;
+      sincronizaEstoque;
+      sincronizaUsuarios;
+      sincronizaCEST;
+      sincronizaParamGerais;
+
+      testaNFe();
+    end;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('ERRO: ' + e.Message);
+      end;
+  end;
+  
+  TrimAppMemorySize;
+
+  try
+    sincronizaNFCe;
+  except
+  end;
+
+  try
+    copiaNFes;
+  except
+  end;
+
+  Timer1.Enabled := true;
+end;
+
+procedure TForm1.FormShow(Sender: TObject);
+begin
+  LerConfiguracaoNFCe;
+end;
+
+procedure TForm1.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+{  sim1 := FormatDateTime('HH',now) + strzero(StrToInt(FormatDateTime('dd', now)) + StrToInt(FormatDateTime('mm',now)), 2) + FormatDateTime('YY',now);
+  sim := InputBox('Senha', 'Informe a Senha:', '');
+  if sim <> sim1 then
+    begin
+      abort;
+      ShowMessage('');
+    end;}
+end;
+
+procedure TrimAppMemorySize;
+var
+  MainHandle : THandle;
+begin
+  try
+    MainHandle := OpenProcess(PROCESS_ALL_ACCESS, false, GetCurrentProcessID) ;
+    SetProcessWorkingSetSize(MainHandle, $FFFFFFFF, $FFFFFFFF) ;
+    CloseHandle(MainHandle) ;
+  except
+  end;
+  Application.ProcessMessages;
+end;
+
+procedure TForm1.Button1Click(Sender: TObject);
+begin
+  criaXMLs(InputBox('','',''), '', '');
+end;
+
+function TForm1.conectaBD_Servidor() : boolean;
+begin
+  Result := false;
+  try
+    if BD_Servidor.Connected = false then BD_Servidor.Connected := true;
+    Result := true;
+  except
+    on e: exception do
+      begin
+        RichEdit1.Lines.Add('Ocorreu um Erro na Conexao do BD do servidor!' + #13 +
+                            'Caminho BD: ' + BD_Servidor.DatabaseName + #13 +
+                            'Erro: ' + e.Message);
+      end;
+  end;
+end;
+
+function TForm1.sincronizaParamGerais()  : boolean;
+var
+  valor : String;
+begin
+  Result := false;
+  if bdPronto = false then exit;
+  if conectaBD_Servidor = false then exit;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'select cod, valor from pgerais where cod = 10';
+  IBQueryServer1.Open;
+
+  valor := strnum(IBQueryServer1.fieldbyname('valor').AsString);
+
+  if Contido('|' + valor + '|', '|1|2|3|4|') then begin
+    IBQuery1.Close;
+    IBQuery1.SQL.Text := 'update pgerais set valor = :valor where cod = 10';
+    IBQuery1.ParamByName('valor').AsString := valor;
+    IBQuery1.ExecSQL;
+    IBQuery1.Transaction.Commit;
+    RichEdit1.Lines.Add('Parâmetros Gerais Importados: PARAM 10 = ' + valor );
+    Result := true;
+  end
+  else begin
+    RichEdit1.Lines.Add('ERRO na Conversao dos Param Gerais: PARAM 10 = ' + valor );
+  end;
+
+  IBQueryServer1.Close;
+  BD_Servidor.Connected := false;
+end;
+
+function TForm1.sincronizaEstoque()  : boolean;
+var
+  cods, codsParaExcluir : String;
+  lista : TStringList;
+  ini, fim, atu, listacount, atualizados, tmp, cont, exclu : integer;
+begin
+  if bdPronto = false then exit;
+  if conectaBD_Servidor = false then exit;
+
+  if verSeOcorreuMudancaEstoque = false then exit;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := sqlSincServer;
+  IBQueryServer1.Open;
+  IBQueryServer1.FetchAll;
+
+  lista := TStringList.Create;
+  lista.Clear;
+  le_estoque(lista);
+
+  ini := 0;
+  atu := 0;
+  cont := 5000;
+  atualizados := 0;
+  exclu       := 0;
+  fim := IBQueryServer1.RecordCount;
+  if lista.Count = 0 then listacount := 0
+    else listacount := lista.Count -1;
+  self.Caption := 'Sincronizando Estoque...';
+
+  if IBQuery1.Transaction.InTransaction then IBQuery1.Transaction.Commit;
+  IBQuery1.Transaction.StartTransaction;
+
+  cods := '|';
+  while not IBQueryServer1.Eof do
+    begin
+      progresso(ini, fim);
+
+      cods := cods + IBQueryServer1.fieldbyname('COD').AsString + '|';
+
+      if atu > listacount then
+        begin
+          try
+            copiaProdutoDataSet(IBQueryServer1);
+          except
+            on e:exception do
+              begin
+                RichEdit1.Lines.Add('ERRO: ' + e.Message + ' Linha 432');
+              end;
+          end;
+          atu := atu + 1;
+          atualizados := atualizados + 1;
+        end
+      else
+        begin
+          if listacount = 0 then
+            begin
+              copiaProdutoDataSet(IBQueryServer1);
+              atualizados := atualizados + 1;
+            end
+          else
+            begin
+              IF lista.Names[atu] <> IBQueryServer1.fieldbyname('COD').AsString then
+                begin
+                  tmp := procuraProdutoNaLista(IBQueryServer1.fieldbyname('COD').AsInteger, lista);
+                  if tmp = -1 then
+                    begin
+                      copiaProdutoDataSet(IBQueryServer1);
+                      if atu < listacount then atu := atu + 1;
+                      atualizados := atualizados + 1;
+                    end;
+                end;
+
+              if lista.ValueFromIndex[atu] <> IBQueryServer1.fieldbyname('hash').AsString then
+                begin
+                  copiaProdutoDataSet(IBQueryServer1);
+                  atualizados := atualizados + 1;
+                end;
+            end;
+        end;
+
+      IBQueryServer1.Next;
+      ini := ini + 1;
+      if atu < listacount then atu := atu + 1;
+    end;
+
+
+  if ini > 0 then
+    begin
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'select cod from produto';
+      IBQuery1.Open;
+
+      while not IBQuery1.Eof do
+        begin
+          if Contido('|' + IBQuery1.fieldbyname('cod').AsString + '|', cods) = false then
+            begin
+              IBQuery2.Close;
+              IBQuery2.SQL.Text := 'delete from produto where cod = :cod';
+              IBQuery2.ParamByName('cod').AsInteger := IBQuery1.fieldbyname('cod').AsInteger;
+              IBQuery2.ExecSQL;
+              exclu := exclu + 1;
+            end;
+
+          IBQuery1.Next;
+        end;
+    end;
+      {IBQuery1.Close;
+      IBQuery1.SQL.Text := 'delete from produto p where position(''|'' || p.cod || ''|'' in '+ QuotedStr(cods) +') = 0';
+      try
+        IBQuery1.ExecSQL;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('ERRO: ' + e.Message + ' Linha 480' + #13 + IBQuery1.SQL.Text);
+          end;
+      end;}
+
+      RichEdit1.Lines.Add('Quantidade de Registros Atualizados: ' + IntToStr(atualizados) + ' Produtos');
+      RichEdit1.Lines.Add('Quantidade de Produtos  Excluidos  : ' + IntToStr(exclu) + ' Produtos');
+      if IBQuery1.Transaction.InTransaction then IBQuery1.Transaction.Commit;
+      if IBQuery2.Transaction.InTransaction then IBQuery2.Transaction.Commit;
+ 
+  reStartGenerator('ATUALIZACADPROD', StrToInt(Incrementa_Generator('ATUALIZACADPROD', 0, IBQueryServer1)))
+end;
+
+procedure TForm1.LerDadosArquivo();
+var
+ IniFile, usarBD                : String;
+ Ini                    : TIniFile;
+begin
+ if FileExists(ExtractFileDir(ParamStr(0)) + '\ControlW.ini') then
+   begin
+     IniFile    := ExtractFileDir(ParamStr(0)) + '\ControlW.ini';
+     //exit;
+   end
+ else
+   begin
+     IniFile    := ChangeFileExt( Application.ExeName, '.ini') ;
+   end;
+ Ini        := TIniFile.Create(IniFile);
+
+ if Ini.ReadString('SERVER','usarServidorRemoto', 'N') = 'S' then bdPronto := true
+   else bdPronto := false;
+
+ pastaControlW_Servidor :=  Ini.ReadString('SERVER','pastaServidor', '');
+ if pastaControlW_Servidor <> '' then
+   begin
+     if RightStr(pastaControlW_Servidor,1) <> '\' then pastaControlW_Servidor := pastaControlW_Servidor + '\';
+   end;
+ {else begin
+   pastaControlW_Servidor := 'XX';
+ end;}
+
+ if pastaControlW_Servidor <> '' then
+   begin
+     RichEdit1.Lines.Add('Pasta ControlW Servidor: ' + pastaControlW_Servidor);
+   end;
+
+ BD_Servidor.DatabaseName    := Ini.ReadString('SERVER','conexaoBD', '');
+
+ BD_Servidor.Connected := false;
+ Ini.Free;
+end;
+
+function TForm1.sincronizaUsuarios()  : boolean;
+var
+  ini, fim, atu : integer;
+begin
+  if bdPronto = false then exit;
+  if conectaBD_Servidor = false then exit;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'select * from usuario';
+  IBQueryServer1.Open;
+  IBQueryServer1.FetchAll;
+
+  ini := 0;
+  atu := 0;
+  fim := IBQueryServer1.RecordCount;
+
+  while not IBQueryServer1.Eof do
+    begin
+      ini := ini + 1;
+
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'update or insert into usuario(cod, nome, senha, acesso, usu, nom, vendedor, configu)' +
+      'values(:cod, :nome, :senha, :acesso, :usu, :nom, :vendedor, :configu)';
+      IBQuery1.ParamByName('cod').AsInteger      := IBQueryServer1.fieldbyname('cod').AsInteger;
+      IBQuery1.ParamByName('nome').AsString      := IBQueryServer1.fieldbyname('nome').AsString;
+      IBQuery1.ParamByName('senha').AsString     := IBQueryServer1.fieldbyname('senha').AsString;
+      IBQuery1.ParamByName('acesso').AsString    := IBQueryServer1.fieldbyname('acesso').AsString;
+      IBQuery1.ParamByName('usu').AsString       := IBQueryServer1.fieldbyname('usu').AsString;
+      IBQuery1.ParamByName('nom').AsString       := IBQueryServer1.fieldbyname('nom').AsString;
+      IBQuery1.ParamByName('vendedor').AsInteger := IBQueryServer1.fieldbyname('vendedor').AsInteger;
+      IBQuery1.ParamByName('configu').AsString   := IBQueryServer1.fieldbyname('configu').AsString;
+      IBQuery1.ExecSQL;
+
+      IBQueryServer1.Next;
+    end;
+
+  RichEdit1.Lines.Add('Usuários Importados: ' + IntToStr(ini));
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'select * from vendedor';
+  IBQueryServer1.Open;
+  IBQueryServer1.FetchAll;
+
+  ini := 0;
+  atu := 0;
+  fim := IBQueryServer1.RecordCount;
+
+  while not IBQueryServer1.Eof do
+    begin
+      ini := ini + 1;
+
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'update or insert into VENDEDOR(cod, nome) values(:cod, :nome)';
+      IBQuery1.ParamByName('cod').AsInteger      := IBQueryServer1.fieldbyname('cod').AsInteger;
+      IBQuery1.ParamByName('nome').AsString      := IBQueryServer1.fieldbyname('nome').AsString;
+      IBQuery1.ExecSQL;
+
+      IBQueryServer1.Next;
+    end;
+
+  if ini > 0 then
+    begin
+      if IBQuery1.Transaction.InTransaction then IBQuery1.Transaction.Commit;
+    end;
+
+  RichEdit1.Lines.Add('Vendedores Importados: ' + IntToStr(ini));
+
+  IBQueryServer1.Close;
+  BD_Servidor.Connected := false;
+end;
+
+function TForm1.sincronizaNFCe()  : boolean;
+var
+  lista : TStringList;
+  ini, fim, atu,notaVenda, XMLnEncontrado : integer;
+  copiado : boolean;
+begin
+  // aqui vai entrar quando nao estiver marcado sincronização e nao estiver informado pasta para copiar os xmls
+  // aqui só ira verificar os xmls e alterar o exportado = 1 para os xmls que estiverem ok
+  if (pastaControlW_Servidor = 'XX') then
+    begin
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'select chave, nota from nfce where (adic = '''')  and exportado = 0';
+      IBQuery1.Open;
+      IBQuery1.FetchAll;
+
+      ini := 0;
+      atu := 0;
+      XMLnEncontrado := 0;
+      fim := IBQuery1.RecordCount;
+
+      while not IBQuery1.Eof do
+        begin
+          ini := ini + 1;
+
+          if FileExists(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml') then
+            begin
+             copiado := copiaNFCes(IBQuery1.fieldbyname('chave').AsString,IBQuery1.fieldbyname('nota').AsInteger, notaVenda, true);
+            end
+          else XMLnEncontrado := XMLnEncontrado + 1;
+
+          IBQuery1.Next;
+        end;
+
+      if ini > 0 then
+        begin
+          RichEdit1.Lines.Add('NFCes Verificadas: ' + strzero(ini, 3) + ' Nota: ' + IBQuery1.fieldbyname('nota').AsString + #13 +
+          'XML Nao Encontrados: ' + IntToStr(XMLnEncontrado));
+          if IBQuery2.Transaction.InTransaction then IBQuery2.Transaction.Commit;
+        end;
+      exit;
+    end;
+
+
+  // aqui vai entrar quando nao estiver marcado sincronização mas estiver informado a pasta pra copiar os xmls
+  if (bdPronto = false) and (pastaControlW_Servidor <> '') then
+    begin
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'select chave, nota from nfce where ((adic = '''') or (adic = ''CANC'')) and exportado = 0';
+      IBQuery1.Open;
+      IBQuery1.FetchAll;
+
+      ini := 0;
+      atu := 0;
+      XMLnEncontrado := 0;
+      fim := IBQuery1.RecordCount;
+
+      while not IBQuery1.Eof do
+        begin
+          ini := ini + 1;
+
+          if FileExists(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml') then
+            begin
+
+             copiado := copiaNFCes(IBQuery1.fieldbyname('chave').AsString,IBQuery1.fieldbyname('nota').AsInteger, notaVenda, true);
+             //if copiado then RichEdit1.Lines.Add('Nota Servidor: ' + IntToStr(notaVenda) + ' OK!!')
+               //else RichEdit1.Lines.Add('ERRO Nota Servidor: ' + IntToStr(notaVenda) + ' !');
+            end
+          else XMLnEncontrado := XMLnEncontrado + 1;
+
+          IBQuery1.Next;
+        end;
+
+      if ini > 0 then
+        begin
+          RichEdit1.Lines.Add('Vendas Exportadas: ' + strzero(ini, 3) + ' Nota: ' + IBQuery1.fieldbyname('nota').AsString + #13 +
+          'XML Nao Encontrados: ' + IntToStr(XMLnEncontrado));
+          if IBQuery2.Transaction.InTransaction then IBQuery2.Transaction.Commit;
+        end;
+      exit;
+    end;
+
+  if bdPronto = false then exit;
+  if conectaBD_Servidor = false then exit;
+
+  if IBQueryServer1.Transaction.InTransaction then IBQueryServer1.Transaction.Commit;
+  IBQueryServer1.Transaction.StartTransaction;
+
+  IBQuery1.Close;
+  IBQuery1.SQL.Text := 'select chave, nota from nfce where ((adic = '''') or (adic = ''CANC'')) and exportado = 0';
+  IBQuery1.Open;
+  IBQuery1.FetchAll;
+
+  ini := 0;
+  atu := 0;
+  XMLnEncontrado := 0;
+  fim := IBQuery1.RecordCount;
+
+  while not IBQuery1.Eof do
+    begin
+      ini := ini + 1;
+
+      if FileExists(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml') then
+        begin
+          copiaVendas(IBQuery1.fieldbyname('nota').AsInteger, notaVenda, IBQuery1.fieldbyname('chave').AsString);
+          copiaNFCes(IBQuery1.fieldbyname('chave').AsString,IBQuery1.fieldbyname('nota').AsInteger, notaVenda);
+
+          RichEdit1.Lines.Add('Nota Servidor: ' + IntToStr(notaVenda) + ' OK!!');
+        end
+       else XMLnEncontrado := XMLnEncontrado + 1;
+
+      IBQuery1.Next;
+    end;
+
+  if ini > 0 then
+    begin
+      RichEdit1.Lines.Add('Vendas Exportadas: ' + strzero(ini, 3) + ' Nota: ' + IBQuery1.fieldbyname('nota').AsString + #13 +
+      'XML Nao Encontrados: ' + IntToStr(XMLnEncontrado));
+      if IBQuery2.Transaction.InTransaction then IBQuery2.Transaction.Commit;
+      if IBQueryServer1.Transaction.InTransaction then IBQueryServer1.Transaction.Commit;
+    end;
+
+  BD_Servidor.Connected := false;
+  //BD_Servidor.Close;
+end;
+
+procedure TForm1.copiaVendas(nota : integer; var notaNova : integer; chave : String; Cancelado : integer = 0);
+begin
+  IBQuery2.Close;
+  IBQuery2.SQL.Text := 'select * from venda where nota = :nota';
+  IBQuery2.ParamByName('nota').AsInteger := nota;
+  IBQuery2.Open;
+
+  if IBQuery2.IsEmpty then exit;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'select chave, nota from nfce where chave = :chave';
+  IBQueryServer1.ParamByName('chave').AsString := chave;
+  IBQueryServer1.Open;
+
+  If IBQueryServer1.IsEmpty = false then //se existir uma nfce com essa chave no bd do servidor
+    begin
+      notaNova  := IBQueryServer1.fieldbyname('nota').AsInteger;
+      Cancelado := IBQuery2.fieldbyname('cancelado').AsInteger;
+      //if Cancelado = 0 then Cancelado := 1;
+      if Cancelado > 0 then
+        begin
+          IBQueryServer1.Close;
+          IBQueryServer1.SQL.Text := 'update venda set cancelado = :canc where nota = :nota';
+          IBQueryServer1.ParamByName('canc').AsInteger := Cancelado;
+          IBQueryServer1.ParamByName('nota').AsInteger := notaNova;
+          IBQueryServer1.ExecSQL;
+          IBQueryServer1.Transaction.Commit;
+
+          RichEdit1.Lines.Add('Venda No '+ IntToStr(notaNova) + ' Cancelada No Servidor pelo Usuário ' + IntToStr(Cancelado) + ' Linha 630');
+          exit;
+        end
+      else
+        begin
+          IBQueryServer1.Close;
+          IBQueryServer1.SQL.Text := 'select * from venda where nota = :nota';
+          IBQueryServer1.ParamByName('nota').AsInteger := notaNova;
+          IBQueryServer1.Open;
+
+          if not IBQueryServer1.IsEmpty then
+            begin
+              RichEdit1.Lines.Add('Venda No '+ IntToStr(notaNova) + ' Linha 642');
+              exit;
+            end;
+        end;
+    end;
+
+  notaNova := StrToInt(Incrementa_Generator('venda', 1, IBQueryServer1));
+  RichEdit1.Lines.Add('Venda No: ' + IntToStr(notaNova));
+  if IBQueryServer1.Transaction.InTransaction then IBQueryServer1.Transaction.Commit;
+  IBQueryServer1.Transaction.StartTransaction;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'insert into venda(nota, data, total, vendedor, cliente, desconto, entrega, hora,'+
+  'codhis, cancelado, prazo, entrada, ok, crc, usuario) values(:nota, :data, :total, :vendedor, :cliente, :desconto, :entrega, :hora,'+
+  ':codhis, :cancelado, :prazo, :entrada, :ok, :crc, :usuario)';
+  IBQueryServer1.ParamByName('nota').AsInteger       := notaNova;
+  IBQueryServer1.ParamByName('data').AsDate          := IBQuery2.fieldbyname('data').AsDateTime;
+  IBQueryServer1.ParamByName('total').AsCurrency     := IBQuery2.fieldbyname('total').AsCurrency;
+  IBQueryServer1.ParamByName('vendedor').AsInteger   := IBQuery2.fieldbyname('vendedor').AsInteger;
+  IBQueryServer1.ParamByName('cliente').AsInteger    := IBQuery2.fieldbyname('cliente').AsInteger;
+  IBQueryServer1.ParamByName('desconto').AsCurrency  := IBQuery2.fieldbyname('desconto').AsCurrency;
+  IBQueryServer1.ParamByName('entrega').AsString     := IBQuery2.fieldbyname('entrega').AsString;
+  IBQueryServer1.ParamByName('hora').AsTime          := IBQuery2.fieldbyname('hora').AsDateTime;
+  IBQueryServer1.ParamByName('codhis').AsInteger     := IBQuery2.fieldbyname('codhis').AsInteger;
+  IBQueryServer1.ParamByName('cancelado').AsInteger  := IBQuery2.fieldbyname('cancelado').AsInteger;
+  IBQueryServer1.ParamByName('prazo').AsInteger      := IBQuery2.fieldbyname('prazo').AsInteger;
+  IBQueryServer1.ParamByName('entrada').AsCurrency   := IBQuery2.fieldbyname('entrada').AsCurrency;
+  IBQueryServer1.ParamByName('ok').AsString          := IBQuery2.fieldbyname('ok').AsString;
+  IBQueryServer1.ParamByName('crc').AsString         := IBQuery2.fieldbyname('crc').AsString;
+  IBQueryServer1.ParamByName('usuario').AsInteger    := IBQuery2.fieldbyname('usuario').AsInteger;
+  IBQueryServer1.ExecSQL;
+
+  IBQuery2.Close;
+  IBQuery2.SQL.Text := 'select * from item_venda where nota = :nota';
+  IBQuery2.ParamByName('nota').AsInteger := nota;
+  IBQuery2.Open;
+
+  while not IBQuery2.Eof do
+    begin
+      IBQueryServer1.Close;
+      IBQueryServer1.SQL.Text := 'insert into item_venda(nota, cod, quant, p_venda, total, aliquota, data, unid)' +
+      ' values(:nota, :cod, :quant, :p_venda, :total, :aliquota, :data, :unid)';
+      IBQueryServer1.ParamByName('nota').AsInteger     := notaNova;
+      IBQueryServer1.ParamByName('cod').AsInteger      := IBQuery2.fieldbyname('cod').AsInteger;
+      IBQueryServer1.ParamByName('quant').AsCurrency   := IBQuery2.fieldbyname('quant').AsCurrency;
+      IBQueryServer1.ParamByName('p_venda').AsCurrency := IBQuery2.fieldbyname('p_venda').AsCurrency;
+      IBQueryServer1.ParamByName('total').AsCurrency   := IBQuery2.fieldbyname('total').AsCurrency;
+      IBQueryServer1.ParamByName('aliquota').AsString  := IBQuery2.fieldbyname('aliquota').AsString;
+      IBQueryServer1.ParamByName('data').AsDate        := IBQuery2.fieldbyname('data').AsDateTime;
+      IBQueryServer1.ParamByName('unid').AsString      := IBQuery2.fieldbyname('unid').AsString;
+      IBQueryServer1.ExecSQL;
+
+      IBQueryServer1.Close;
+      IBQueryServer1.SQL.Text := 'update produto set quant = quant - :quant where cod = :cod';
+      IBQueryServer1.ParamByName('quant').AsCurrency := IBQuery2.fieldbyname('quant').AsCurrency;
+      IBQueryServer1.ParamByName('cod').AsInteger    := IBQuery2.fieldbyname('cod').AsInteger;
+      IBQueryServer1.ExecSQL;
+
+      IBQuery2.Next;
+    end;
+
+  IBQueryServer1.Transaction.Commit;  
+end;
+
+function TForm1.copiaNFCes(chave : String;nota, notaNova : integer; somenteCopiaXML : boolean = false ) : boolean;
+var
+  arq : TStringList;
+  cstat : String;
+begin
+  Result := false;
+  IBQuery2.Close;
+  IBQuery2.SQL.Text := 'select * from nfce where chave = :nota';
+  IBQuery2.ParamByName('nota').AsString := chave;
+  IBQuery2.Open;
+
+  if somenteCopiaXML then
+    begin
+      arq := TStringList.Create;
+      try
+        arq.LoadFromFile(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml');
+        cstat := Le_Nodo('cStat', arq.GetText);
+        if cstat = '' then
+          begin
+            ACBrNFe1.NotasFiscais.LoadFromFile(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml');
+            ACBrNFe1.Consultar;
+            RichEdit1.Lines.Add('CONSULTA: cStat=' + IntToStr(ACBrNFe1.NotasFiscais[0].NFe.procNFe.cStat));
+
+            if ACBrNFe1.NotasFiscais[0].NFe.procNFe.cStat = 217 then begin
+              IBQuery2.Close;
+              IBQuery2.SQL.Text := 'update nfce set adic = ''OFF'' where chave = :chave';
+              IBQuery2.ParamByName('chave').AsString := chave;
+              IBQuery2.ExecSQL;
+              IBQuery2.Transaction.Commit;
+              RichEdit1.Lines.Add('CHAVE ' + chave + ' MARCADA PARA ENVIO!');
+              exit;
+            end;
+            
+            arq.Free;
+            ACBrNFe1.NotasFiscais[0].GravarXML(IBQuery2.fieldbyname('chave').AsString + '-nfe.xml',ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\');
+          end;
+
+         if pastaControlW_Servidor = 'XX' then begin
+           IBQuery2.Close;
+           IBQuery2.SQL.Text := 'update nfce set exportado = 1 where chave = :chave';
+           IBQuery2.ParamByName('chave').AsString := chave;
+           IBQuery2.ExecSQL;
+           IBQuery2.Transaction.Commit;
+           exit;
+         end;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('XML SEM PROTOCOLO: ' + IBQuery2.fieldbyname('chave').AsString);
+            RichEdit1.Lines.Add('CONSULTA ERRO: ' + E.Message);
+            exit;
+          end;
+      end;
+
+      try
+        if not DirectoryExists(pastaControlW_Servidor + 'NFCe\EMIT\') then ForceDirectories(pastaControlW_Servidor + 'NFCe\EMIT\');
+        IF CopyFile(pchar(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml'), pchar(pastaControlW_Servidor + 'NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml'), true) then begin
+          Result := true;
+        end;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro na Cópia de XML para o Servidor: ' + e.Message + ' Linha 781');
+          end;
+      end;
+
+      if Result then begin
+        RichEdit1.Lines.Add('XML ' + IBQuery2.fieldbyname('chave').AsString + ' Copiado para ' + pastaControlW_Servidor + 'NFCe\EMIT\' );
+        IBQuery2.Close;
+        IBQuery2.SQL.Text := 'update nfce set exportado = 1 where chave = :chave';
+        IBQuery2.ParamByName('chave').AsString := chave;
+        IBQuery2.ExecSQL;
+        IBQuery2.Transaction.Commit;
+        RichEdit1.Lines.Add('XML EXPORTTADO' + IBQuery2.fieldbyname('chave').AsString + ' !' );
+      end
+      else begin
+        RichEdit1.Lines.Add('ERRO NA COPIA XML ' + IBQuery2.fieldbyname('chave').AsString );
+      end;
+      arq.Free;
+      exit;
+    end;
+
+      if IBQueryServer1.Transaction.InTransaction then IBQueryServer1.Transaction.Commit;
+      IBQueryServer1.Transaction.StartTransaction;
+
+      IBQueryServer1.Close;
+      IBQueryServer1.SQL.Text := 'update or insert into nfce(nota, data, chave, adic, cliente, EXPORTADO)' +
+      ' values(:nota, :data, :chave, :adic, :cliente, :EXPORTADO) matching(chave)';
+      IBQueryServer1.ParamByName('nota').AsInteger      := notaNova;
+      IBQueryServer1.ParamByName('data').AsDate         := IBQuery2.fieldbyname('data').AsDateTime;
+      IBQueryServer1.ParamByName('chave').AsString      := IBQuery2.fieldbyname('chave').AsString;
+      IBQueryServer1.ParamByName('adic').AsString       := IBQuery2.fieldbyname('adic').AsString;
+      IBQueryServer1.ParamByName('cliente').AsInteger   := nota;
+      IBQueryServer1.ParamByName('EXPORTADO').AsInteger := IBQuery2.fieldbyname('EXPORTADO').AsInteger;
+      try
+      IBQueryServer1.ExecSQL;
+
+      arq := TStringList.Create;
+      try
+
+
+      arq.LoadFromFile(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml');
+      if Le_Nodo('cStat', arq.GetText) = '' then
+        begin
+          ACBrNFe1.NotasFiscais.LoadFromFile(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml');
+          //ACBrNFe1.Consultar;
+        end;
+    except
+      on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro na Cópia de XML para o Servidor: ' + e.Message + ' Linha 845');
+          end;
+    end;
+
+    try
+      if not DirectoryExists(pastaControlW_Servidor + 'NFCe\EMIT\') then ForceDirectories(pastaControlW_Servidor + 'NFCe\EMIT\');
+      CopyFile(pchar(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml'), pchar(pastaControlW_Servidor + 'NFCe\EMIT\' + IBQuery2.fieldbyname('chave').AsString + '-nfe.xml'), true);
+    except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro na Cópia de XML para o Servidor: ' + e.Message + ' Linha 854');
+          end;
+      end;
+
+    IBQuery2.Close;
+    IBQuery2.SQL.Text := 'update nfce set exportado = 1 where chave = :chave';
+    IBQuery2.ParamByName('chave').AsString := chave;
+    IBQuery2.ExecSQL;
+    IBQuery2.Transaction.Commit;
+
+    if IBQueryServer1.Transaction.InTransaction then IBQueryServer1.Transaction.Commit;
+  except
+  end;
+end;
+
+function TForm1.Incrementa_Generator(Gen_name : string; valor_incremento : integer; var query : TIBQuery) : string;
+begin
+  try
+  query.Close;
+  query.SQL.Clear;
+  query.SQL.Add('select gen_id('+ Gen_name +','+ IntToStr(valor_incremento) +') as venda from rdb$database');
+  query.Open;
+
+  Result := '';
+  Result := query.fieldbyname('venda').AsString;
+
+  query.Close;
+  except
+  end;
+end;
+
+procedure TForm1.le_estoque(var listaprod : TStringList);
+var
+  ini, fim : integer;
+begin
+  listaprod := TStringList.Create;
+  IBQuery1.Close;
+  IBQuery1.SQL.Text := sqlSinc;
+  IBQuery1.Open;
+  IBQuery1.FetchAll;
+
+  ini := 0;
+  //fim := IBQuery1.RecordCount;
+  self.Caption := 'Lendo Estoque...';
+
+  if IBQuery1.IsEmpty then
+    begin
+      listaprod.Clear;
+      IBQuery1.Close;
+      exit;
+    end;
+
+  while not IBQuery1.Eof do
+    begin
+      ini := ini + 1;
+      //progresso(ini, fim);
+      listaprod.Add(IBQuery1.fieldbyname('cod').AsString + '=' + IBQuery1.fieldbyname('hash').AsString);
+      IBQuery1.Next;
+    end;
+end;
+
+
+procedure TForm1.copiaProduto(cod : integer);
+begin
+  IBQueryServer2.Close;
+  if cod > 0 then
+    begin
+      IBQueryServer2.SQL.Text := 'select cod,nome, codbar, quant, p_venda, unid, classif, aliquota, is_pis, cod_ispis from produto' +
+      ' where cod = :cod';
+      IBQueryServer2.ParamByName('cod').AsInteger := cod;
+    end
+  else IBQueryServer2.SQL.Text := 'select cod,nome, codbar, quant, p_venda, unid, classif, aliquota, is_pis, cod_ispis from produto';
+
+  try
+    IBQueryServer2.Open;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('ERRO: ' + e.Message + ' Linha 945');
+      end;
+  end;
+
+  IBQuery1.Close;
+  IBQuery1.SQL.Text := 'update or insert into produto(cod, quant, nome, codbar, p_venda, unid, classif, aliquota, is_pis, cod_ispis, grupo)' +
+  ' values(:cod, :quant, :nome, :codbar, :p_venda, :unid, :classif, :aliquota, :is_pis, :cod_ispis, 0)';
+  IBQuery1.ParamByName('quant').AsCurrency   := IBQueryServer2.fieldbyname('quant').AsCurrency;
+  IBQuery1.ParamByName('cod').AsInteger      := IBQueryServer2.fieldbyname('cod').AsInteger;
+  IBQuery1.ParamByName('nome').AsString      := IBQueryServer2.fieldbyname('nome').AsString;
+  IBQuery1.ParamByName('codbar').AsString    := IBQueryServer2.fieldbyname('codbar').AsString;
+  IBQuery1.ParamByName('p_venda').AsCurrency := IBQueryServer2.fieldbyname('p_venda').AsCurrency;
+  IBQuery1.ParamByName('unid').AsString      := IBQueryServer2.fieldbyname('unid').AsString;
+  IBQuery1.ParamByName('classif').AsString   := IBQueryServer2.fieldbyname('classif').AsString;
+  IBQuery1.ParamByName('aliquota').AsString  := IBQueryServer2.fieldbyname('aliquota').AsString;
+  IBQuery1.ParamByName('is_pis').AsString    := IBQueryServer2.fieldbyname('is_pis').AsString;
+  IBQuery1.ParamByName('cod_ispis').AsString := IBQueryServer2.fieldbyname('cod_ispis').AsString;
+
+  try
+   IBQuery1.ExecSQL;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('ERRO: ' + e.Message + ' Linha 965');
+      end;
+  end;
+end;
+
+procedure TForm1.copiaProdutoDataSet(var queryServer : TIBQuery);
+begin
+  IBQuery1.Close;
+  IBQuery1.SQL.Text := 'update or insert into produto(cod, quant, nome, codbar, p_venda, unid, classif, aliquota, is_pis, cod_ispis, grupo)' +
+  ' values(:cod, :quant, :nome, :codbar, :p_venda, :unid, :classif, :aliquota, :is_pis, :cod_ispis, 0)';
+  IBQuery1.ParamByName('quant').AsCurrency   := queryServer.fieldbyname('quant').AsCurrency;
+  IBQuery1.ParamByName('cod').AsInteger      := queryServer.fieldbyname('cod').AsInteger;
+  IBQuery1.ParamByName('nome').AsString      := queryServer.fieldbyname('nome').AsString;
+  IBQuery1.ParamByName('codbar').AsString    := queryServer.fieldbyname('codbar').AsString;
+
+  if ((LeftStr(queryServer.fieldbyname('codbar').AsString, 1) = '2') and (length(queryServer.fieldbyname('codbar').AsString) < 13)) then
+    begin
+      IBQuery1.ParamByName('codbar').AsString  := LeftStr(queryServer.fieldbyname('codbar').AsString, 5);
+    end;
+
+  IBQuery1.ParamByName('p_venda').AsCurrency := queryServer.fieldbyname('p_venda').AsCurrency;
+  IBQuery1.ParamByName('unid').AsString      := queryServer.fieldbyname('unid').AsString;
+  IBQuery1.ParamByName('classif').AsString   := queryServer.fieldbyname('classif').AsString;
+  IBQuery1.ParamByName('aliquota').AsString  := queryServer.fieldbyname('aliquota').AsString;
+  IBQuery1.ParamByName('is_pis').AsString    := queryServer.fieldbyname('is_pis').AsString;
+  IBQuery1.ParamByName('cod_ispis').AsString := queryServer.fieldbyname('cod_ispis').AsString;
+  try
+    IBQuery1.ExecSQL;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('ERRO: ' + e.Message + ' Linha 971');
+      end;
+  end;
+end;
+
+procedure TForm1.progresso(ini, fim : integer);
+var
+  b : integer;
+begin
+  Application.ProcessMessages;
+  //exit;
+  Gauge1.Progress := trunc(ini / fim * 100);
+  if Gauge1.Progress > b then
+    begin
+      b := b + 5;
+      Gauge1.Progress := b;
+    end;
+end;
+
+procedure TForm1.ajustaHoraPelaInternet();
+var
+  data : TDateTime;
+  SystemTime : TSystemTime;
+  cont : integer;
+begin
+  cont := 0;
+  while true do
+    begin
+      if cont > 7 then
+        begin
+          RichEdit1.Lines.Add('Tentativas de Atualização de Hora Esgotados e Não Possivel atualizar a Hora!');
+          exit;
+        end;
+
+      cont := cont + 1;
+      try
+        data := IdSNTP1.DateTime;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro Na Atualização da Hora data := IdSNTP1.DateTime: ' + e.Message);
+          end;
+      end;
+
+      try
+        if data > StrToDate('01/01/2016') then
+          begin
+            break;
+          end;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('Erro Na Atualização da Hora:  data > StrToDate(01/01/2016):' + e.Message);
+          end;
+      end;
+  end;
+
+  try
+    if data < StrToDate('01/01/2016') then
+      begin
+        RichEdit1.Lines.Add('Tentativas de Atualização de Hora Esgotados e Não Possivel atualizar a Hora! Linha 1083');
+        exit;
+      end;
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('Erro Na Atualização da Hora:  data > StrToDate(01/01/2016):' + e.Message);
+      end;
+  end;
+
+  RichEdit1.Lines.Add('--------------------------------------------------');
+  RichEdit1.Lines.Add('Hora Ajustada: ' + FormatDateTime('dd/mm/yy', data) + ' ' + FormatDateTime('hh:mm:ss', data));
+  RichEdit1.Lines.Add('--------------------------------------------------');
+
+
+  SystemTime.wYear   := YearOf(data);
+  SystemTime.wMonth  := MonthOf(data);
+  SystemTime.wDay    :=  DayOf(data);
+  SystemTime.wHour   := HourOf(data);
+  SystemTime.wMinute := MinuteOf(data);
+  SystemTime.wSecond := SecondOf(data);
+  SetLocalTime(SystemTime);
+end;
+
+function TForm1.verSeOcorreuMudancaEstoque() : boolean;
+var
+  codLocal : String;
+begin
+  if BD_Servidor.Connected = false then exit;
+  Result := false;
+  codLocal := Incrementa_Generator('ATUALIZACADPROD', 0, IBQuery2);
+  if codLocal <>  Incrementa_Generator('ATUALIZACADPROD', 0, IBQueryServer1) then
+    begin
+      Result := true;
+    end;
+end;
+
+function TForm1.conectaBD_Local() : boolean;
+begin
+  Result := false;
+  try
+    BDControl.Connected := true;
+    Result := true;
+    sinal(3);
+    geraPgerais(pgerais);
+  except
+    on e:exception do
+      begin
+        RichEdit1.Lines.Add('Ocorreu um Erro na Conexao do BD!'     + #13 +
+                            'Caminho BD: ' + BDControl.DatabaseName + #13 +
+                            'Erro: ' + e.Message);
+        sinal(2);
+      end;
+  end;
+
+end;
+
+procedure TForm1.sinal(const num : integer);
+begin
+  if num = 1 then
+    begin
+      Panel1.Color := clYellow;
+      Label2.Caption := 'Preparando...';
+    end
+  else if num = 2 then
+    begin
+      Panel1.Color := clRed;
+      Label2.Caption := 'Erro!';
+    end
+  else if num = 3 then
+    begin
+      Panel1.Color := clGreen;
+      Label2.Caption := 'Funcionando!';
+    end;
+end;
+
+procedure TForm1.copiaNFes();
+var
+  arq : TStringList;
+begin
+  if (((emitNFe and CAMPO_EXPORTADO_FOI_CRIADO) = false)) then
+    begin
+      exit;
+    end;
+
+  //if pastaControlW_Servidor = '' then exit;  
+
+  arq := TStringList.Create;
+
+  IBQuery1.Close;
+  IBQuery1.SQL.Text := 'select * from nfe where exportado = 0';
+  IBQuery1.Open;
+
+  while not IBQuery1.Eof do
+    begin
+      Application.ProcessMessages;
+      //'\NFE\EMIT\'
+      if not FileExists(pastanfe + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml') then
+        begin
+          RichEdit1.Lines.Add('NFe: ' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml Não Encontrada!' );
+          IBQuery2.Close;
+          IBQuery2.SQL.Text := 'update nfe set exportado = 1 where chave = :chave';
+          IBQuery2.ParamByName('chave').AsString := IBQuery1.fieldbyname('chave').AsString;
+          IBQuery2.ExecSQL;
+          IBQuery2.Transaction.Commit;
+        end
+      else
+        begin
+          arq.LoadFromFile(pastanfe + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml');
+          if Le_Nodo('cStat', arq.GetText) = '' then
+            begin
+              ACBrNFe1.NotasFiscais.LoadFromFile(ExtractFileDir(ParamStr(0)) + '\NFCe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml');
+              try
+                ACBrNFe1.Consultar;
+              except
+                on e:exception do
+                  begin
+                    RichEdit1.Lines.Add('Erro na Consulta da NFe: ' + IBQuery1.fieldbyname('chave').AsString + ' Linha 967');
+                  end;
+              end;
+            end
+          else
+            begin
+              try
+                if not DirectoryExists(pastaControlW_Servidor + 'NFe\EMIT\') then ForceDirectories(pastaControlW_Servidor + 'NFe\EMIT\');
+                CopyFile(pchar(ExtractFileDir(ParamStr(0)) + '\NFe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml'), pchar(pastaControlW_Servidor + 'NFe\EMIT\' + IBQuery1.fieldbyname('chave').AsString + '-nfe.xml'), true);
+              except
+                on e:exception do
+                  begin
+                    RichEdit1.Lines.Add('Erro na Cópia de XML para o Servidor: ' + e.Message + ' Linha 1066');
+                  end;
+              end;
+
+              IBQuery2.Close;
+              IBQuery2.SQL.Text := 'update nfe set exportado = 1 where chave = :chave';
+              IBQuery2.ParamByName('chave').AsString := IBQuery1.fieldbyname('chave').AsString;
+              IBQuery2.ExecSQL;
+              IBQuery2.Transaction.Commit;
+            end;
+        end;
+
+      IBQuery1.Next;
+    end;
+
+end;
+
+function TForm1.listaArquivos(const pasta : String) : tstringlist;
+Var
+   SearchFile: TSearchRec;
+   FindResult: Integer;
+begin
+  Result := TStringList.Create;
+  FindResult := FindFirst(pasta, 0, SearchFile);
+  try
+    While FindResult = 0 do
+      begin
+        Application.ProcessMessages;
+        Result.Add(SearchFile.Name);
+        FindResult := FindNext(SearchFile);
+      end;
+  finally
+    FindClose(SearchFile)
+  end;
+end;
+
+function TForm1.VerificaCampoTabela(NomeCampo, tabela : string; var query : TIBQuery) : boolean;
+var
+  texto : string;
+  ini : integer;
+begin
+  Result := false;
+
+  query.Close;
+  query.SQL.Text :=
+  'SELECT R.RDB$FIELD_NAME AS CAMPO,T.RDB$TYPE_NAME AS TIPO,  ' +
+  'F.RDB$FIELD_LENGTH AS TAMANHO FROM RDB$RELATION_FIELDS R   ' +
+  'JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = R.RDB$FIELD_SOURCE ' +
+  'JOIN RDB$TYPES T ON F.RDB$FIELD_TYPE = T.RDB$TYPE WHERE    ' +
+  '(R.RDB$RELATION_NAME = '+QuotedStr(TABELA)+') AND                 ' +
+  '(T.RDB$FIELD_NAME = ''RDB$FIELD_TYPE'') AND R.RDB$FIELD_NAME = '+QuotedStr(NomeCampo)+ 
+  ' ORDER BY R.RDB$FIELD_NAME';
+  query.Open;
+
+  if not query.IsEmpty then
+    begin
+      Result := true;
+    end;
+
+  query.Close;
+
+  {query.Close;
+  query.SQL.Clear;
+  query.SQL.Add('select * from ' + tabela);
+  query.Open;
+
+  for ini := 0 to query.FieldList.Count -1 do
+    begin
+      if UpperCase(NomeCampo) = UpperCase(query.FieldList[ini].FieldName) then
+        begin
+          Result := true;
+          break;
+        end;
+    end;
+
+  query.Close;
+  if funcoes.Contido(UpperCase(NomeCampo),UpperCase(texto)) then
+    begin
+      dm.IBselect.Close;
+      Result := true;
+    end
+  else
+    begin
+      dm.IBselect.Close;
+      Result := false;
+    end;}
+end;
+
+procedure TForm1.testaNFe();
+var
+  arq : TStringList;
+begin
+  emitNFe := false;
+
+  if DirectoryExists(caminhoComBarraNoFinal + 'NFE\EMIT\') then
+    begin
+      pastanfe := caminhoComBarraNoFinal + 'NFE\EMIT\';
+      arq := listaArquivos(pastanfe + '*.xml');
+
+      if arq.Count > 0 then
+        begin
+          emitNFe := true;
+        end;
+      arq.Free;
+    end;
+
+  CAMPO_EXPORTADO_FOI_CRIADO := VerificaCampoTabela('EXPORTADO', 'NFE', IBQuery1);  
+
+  if not emitNFe then
+    begin
+       RichEdit1.Lines.Add('*ERRO PC sem Informações de NFe ******');
+    end
+  else RichEdit1.Lines.Add('****** PC com Informações de NFe ******');
+
+  if not CAMPO_EXPORTADO_FOI_CRIADO then
+    begin
+       RichEdit1.Lines.Add('ERRO CAMPO EXPORTADO na tabela NFe não existe ******');
+    end
+  else RichEdit1.Lines.Add('****** Campo EXPORTADO na tabela NFe Encontrado ******');
+
+  if emitNFe and CAMPO_EXPORTADO_FOI_CRIADO then RichEdit1.Lines.Add('PC Pronto para sincronização de NFe')
+    else RichEdit1.Lines.Add('PC Nao está Pronto para sincronização de NFe');
+end;
+
+function TForm1.procuraProdutoNaLista(cod : integer; var lista1 : TStringList) : integer;
+var
+  i, f : integer;
+begin
+  Result := -1;
+  f := lista1.Count -1;
+  for i := 0 to f do
+    begin
+      if StrToIntDef(lista1.Names[i], 0) = cod then
+        begin
+          Result := i;
+          exit;
+        end;
+    end;
+
+
+end;
+
+function TForm1.sincronizaCEST()  : boolean;
+var
+  ini, fim, atu : integer;
+begin
+  if bdPronto = false then exit;
+  if conectaBD_Servidor = false then exit;
+
+  If not verSeExisteTabela('NCM_CEST', IBQueryServer1) then
+    begin
+      RichEdit1.Lines.Add('ERRO: Tabela Cest no Servidor Não Existe! Atualize o ControlW no Servidor');
+      exit;
+    end;
+
+  If verSeExisteTabela('NCM_CEST', IBQuery1) then
+    begin
+      RichEdit1.Lines.Add('Tabela Cest OK Local');
+      exit;
+    end
+  else
+    begin
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'CREATE TABLE NCM_CEST (' +
+      'NCM   VARCHAR(10) DEFAULT '''' NOT NULL,'       +
+      'CEST  VARCHAR(10) DEFAULT '''' NOT NULL)';
+      IBQuery1.ExecSQL;
+      IBQuery1.Transaction.Commit;
+
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'alter table NCM_CEST ' +
+      'add constraint PK_NCM_CEST ' +
+      'primary key (NCM, CEST)';
+      IBQuery1.ExecSQL;
+      IBQuery1.Transaction.Commit;
+    end;
+
+  IBQueryServer1.Close;
+  IBQueryServer1.SQL.Text := 'select ncm, cest from NCM_CEST';
+  IBQueryServer1.Open;
+  IBQueryServer1.FetchAll;
+
+  ini := 0;
+  atu := 0;
+  fim := IBQueryServer1.RecordCount;
+
+  while not IBQueryServer1.Eof do
+    begin
+      ini := ini + 1;
+
+      IBQuery1.Close;
+      IBQuery1.SQL.Text := 'update or insert into NCM_CEST(ncm, cest) values(:ncm, :cest)';
+      IBQuery1.ParamByName('ncm').AsString  := IBQueryServer1.fieldbyname('ncm').AsString;
+      IBQuery1.ParamByName('cest').AsString := IBQueryServer1.fieldbyname('cest').AsString;
+
+      try
+       IBQuery1.ExecSQL;
+      except
+        on e:exception do
+          begin
+            RichEdit1.Lines.Add('ERRO: ' +e.Message  + ' Linha 1293');
+          end;
+      end;
+
+      IBQueryServer1.Next;
+    end;
+
+  RichEdit1.Lines.Add('Cest Importados: ' + IntToStr(ini));
+
+  if IBQuery1.Transaction.InTransaction then IBQuery1.Transaction.Commit;
+  IBQueryServer1.Close;
+  BD_Servidor.Connected := false;
+end;
+
+function TForm1.verSeExisteTabela(nome : String; var query :TIBQuery) : boolean;
+begin
+  Result := false;
+  query.Close;
+  query.SQL.Clear;
+  query.SQL.Add('select rdb$relation_name from rdb$relations where (rdb$system_flag = 0) and (rdb$relation_name = ' + QuotedStr(nome) + ')');
+  query.Open;
+
+  if query.IsEmpty then Result := false
+    else Result := true;
+
+  query.Close;
+end;
+
+
+
+
+end.
