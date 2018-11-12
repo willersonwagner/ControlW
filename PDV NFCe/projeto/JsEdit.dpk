@@ -1,0 +1,58 @@
+package JsEdit;
+
+{$R *.res}
+{$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO ON}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS ON}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION OFF}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$DEFINITIONINFO ON}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES ON}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DEFINE DEBUG}
+{$ENDIF IMPLICITBUILDING}
+{$IMPLICITBUILD OFF}
+
+requires
+  rtl,
+  vcl,
+  dbrtl,
+  ibxpress,
+  designide,
+  vclactnband,
+  vclx,
+  dsnap,
+  xmlrtl,
+  FireDACCommon,
+  FireDAC,
+  FireDACCommonDriver,
+  FireDACOracleDriver,
+  vclFireDAC,
+  vcldb,
+  FireDACMySQLDriver;
+
+contains
+  JsEditInteiro1 in 'JsEditInteiro1.pas',
+  JsBotao1 in 'JsBotao1.pas',
+  JsEditData1 in 'JsEditData1.pas',
+  JsEdit1 in 'JsEdit1.pas',
+  JsEditCPF1 in 'JsEditCPF1.pas',
+  JsEditCNPJ1 in 'JsEditCNPJ1.pas',
+  JsEditCodLista1 in 'JsEditCodLista1.pas',
+  JsEditNumero1 in 'JsEditNumero1.pas';
+
+end.
