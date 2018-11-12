@@ -1,0 +1,179 @@
+unit cadCli;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, Buttons, JsBotao1, ExtCtrls, Mask, JsEditCPF1, JsEdit1,
+  JsEditInteiro1, func, untnfce;
+
+type
+  TForm12 = class(TForm)
+    Label1: TLabel;
+    Label3: TLabel;
+    nome: JsEdit;
+    cnpj: JsEditCPF;
+    ToolBar1: TPanel;
+    button: JsBotao;
+    procedure bairroKeyPress(Sender: TObject; var Key: Char);
+    procedure buttonKeyPress(Sender: TObject; var Key: Char);
+    procedure codKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure buttonClick(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure numeroKeyPress(Sender: TObject; var Key: Char);
+    procedure cnpjKeyPress(Sender: TObject; var Key: Char);
+    procedure codKeyPress(Sender: TObject; var Key: Char);
+    procedure FormCreate(Sender: TObject);
+    procedure nomeKeyPress(Sender: TObject; var Key: Char);
+  private
+    procedure limpa();
+    function insereCliente : String;
+    procedure buscaCliente(cpf1 : String);
+    procedure montaRetorno(limp : boolean = false);
+    { Private declarations }
+  public
+    codCliente : String;
+    { Public declarations }
+  end;
+
+var
+  Form12: TForm12;
+
+implementation
+
+uses untDtmMain;
+
+{$R *.dfm}
+
+procedure TForm12.limpa();
+begin
+end;
+
+procedure TForm12.bairroKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #27 then
+    begin
+      key := #0;
+      limpa;
+    end;
+
+  if key = #13 then
+    begin
+      button.SetFocus;
+    end;  
+end;
+
+procedure TForm12.buttonKeyPress(Sender: TObject; var Key: Char);
+begin
+  key := #0;
+end;
+
+function TForm12.insereCliente : String;
+begin
+  dtmmain.IBQuery1.Close;
+  dtmMain.IBQuery1.SQL.Text := 'insert into';
+end;
+
+procedure TForm12.codKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if (Key = 116) then
+    begin
+
+      tedit(sender).Text := localizar1('Localizar Cliente','cliente','cod,nome,telres,telcom,cnpj as cpfcnpj,bairro','cod','','nome','nome',false,false,false,'','',450, nil);
+      key := 0;
+    end;
+end;
+
+procedure TForm12.buttonClick(Sender: TObject);
+begin
+  montaRetorno();
+  //codCliente := jsedit.GravaNoBD(self);
+  close;
+end;
+
+procedure TForm12.FormShow(Sender: TObject);
+begin
+  jsedit.SetTabelaDoBd(self, 'cliente', dtmMain.IBQuery1);
+end;
+
+procedure TForm12.numeroKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #13 then button.SetFocus;
+end;
+
+procedure TForm12.cnpjKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #13 then
+    begin
+      if not testacpf(cnpj.Text) then
+        begin
+          MessageDlg('CPF Inválido!', mtError, [mbOK], 1);
+          key := #0;
+          abort;
+          exit;
+        end
+      else
+        begin
+          key := #0;
+          buscaCliente(cnpj.Text);
+          montaRetorno();
+          button.SetFocus;
+        end;
+    end;
+end;
+
+procedure TForm12.codKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #27 then close;
+end;
+
+procedure TForm12.FormCreate(Sender: TObject);
+begin
+  codCliente := '';
+end;
+
+procedure TForm12.buscaCliente(cpf1 : String);
+begin
+  dtmMain.IBQuery1.Close;
+  dtmMain.IBQuery1.SQL.Text := 'select cod, nome, ende, bairro from cliente where cnpj = :cnpj';
+  dtmMain.IBQuery1.ParamByName('cnpj').AsString := cpf1;
+  dtmMain.IBQuery1.Open;
+
+  if dtmMain.IBQuery1.IsEmpty then
+    begin
+      dtmMain.IBQuery1.Close;
+      exit;
+    end;
+
+  //cod.Text    := dtmMain.IBQuery1.fieldbyname('cod').AsString;
+  NOME.Text   := dtmMain.IBQuery1.fieldbyname('nome').AsString;
+  //ende.Text   := dtmMain.IBQuery1.fieldbyname('ende').AsString;
+  //bairro.Text := dtmMain.IBQuery1.fieldbyname('bairro').AsString;
+  dtmMain.IBQuery1.Close;
+end;
+
+procedure TForm12.montaRetorno(limp : boolean = false);
+begin
+  if limp then
+    begin
+      codCliente := '';
+      exit;
+    end;
+
+  if length(nome.Text) < 2 then nome.Text := 'Venda ao Consumidor';
+  codCliente := 'nome=' + nome.Text + #13 +
+  'cpf=' + cnpj.Text;
+end;
+
+procedure TForm12.nomeKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #27 then
+    begin
+      montaRetorno(true);
+      close;
+    end;
+end;
+
+end.
