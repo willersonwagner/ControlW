@@ -1,0 +1,77 @@
+unit JsNumerico;
+
+interface
+
+uses
+ SysUtils, Classes, Controls, StdCtrls, Graphics, Windows, Messages, Forms, contnrs,
+  Dialogs, JsEdit1;
+
+type
+  JsNumerico1 = class(JsEdit)
+  private
+    { Private declarations }
+  protected
+
+  public
+  procedure KeyPress(var Key: Char); override;
+  function getValor() : integer;
+
+  published
+  end;
+
+procedure Register;
+
+implementation
+
+procedure Register;
+begin
+  RegisterComponents('JsEdit', [JsNumerico1]);
+end;
+
+
+function JsNumerico1.getValor() : integer;
+begin
+  result := strtoint(StringReplace(Text, ',', '.', [rfReplaceAll]));
+end;
+
+
+function TrocaVirgPPto(Valor: string): String;
+//
+// Troca a virgula pelo ponto em um valor Float
+//
+var i:integer;
+begin
+if  not (Valor = '') then
+   begin
+   for i := 0 to Length(Valor) do
+       begin
+       if Valor[i]='.' then
+          begin
+          Valor[i]:=',';
+          end
+       else if Valor[i] = ',' then
+               begin
+               Valor[i]:='.';
+               end;
+       end;
+   end;
+   Result := valor;
+end;
+
+procedure JsNumerico1.KeyPress(var Key: Char);
+begin
+  Inherited KeyPress(Key);
+  if ((Key = #13) and (Self = JsEdit.GetPrimeiroCampo))then
+    begin
+      self.Enabled := false;
+      //PostMessage((Owner as TWinControl).Handle, WM_NEXTDLGCTL, 0, 0);
+    end
+   else
+    if ((Key < #48) or (Key > #58) ) and (Key <> #8) then
+       Key := #0;
+end;
+
+
+
+
+end.
